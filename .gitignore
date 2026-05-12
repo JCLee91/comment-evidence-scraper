@@ -1,0 +1,8 @@
+chrome_session/
+output/
+.progress_*.json
+_raw_*.json
+*.sha256
+__pycache__/
+*.pyc
+.DS_Store
