@@ -173,7 +173,7 @@ async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
             headless=False,
             viewport=VIEWPORT,
             locale="ko-KR",
-            args=[f"--remote-debugging-port={CDP_PORT}"],
+            args=[f"--remote-debugging-port={CDP_PORT}", "--start-maximized"],
         )
         try:
             if not await wait_for_cdp():

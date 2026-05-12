@@ -26,6 +26,11 @@ async def get_context(p, cdp_url: str | None, user_data_dir: str, **launch_opts)
                 "run.py 가 persistent context 를 띄웠는지 확인."
             )
         return browser.contexts[0], False
+    # Standalone launch — Chrome maximized 로 (메뉴바 시계 보이는 풀스크린 캡처용)
+    extra_args = launch_opts.pop("args", [])
+    if "--start-maximized" not in extra_args:
+        extra_args = ["--start-maximized", *extra_args]
+    launch_opts["args"] = extra_args
     ctx = await p.chromium.launch_persistent_context(user_data_dir, **launch_opts)
     return ctx, True
 

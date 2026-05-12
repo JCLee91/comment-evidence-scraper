@@ -9,6 +9,8 @@ URL 분기 + 4단계 파이프라인 + chain of custody. 디지털 비친화 사
 
 **캡처는 OS 레벨 풀스크린** — 메뉴바/작업표시줄 시계까지 한 장에 박혀 타임스탬프 위조 난이도 ↑. 브라우저 viewport 가 아님.
 
+Chrome 은 `--start-maximized` 로 launch — 다른 앱들이 Chrome 뒤로 가려지므로 데스크탑 청소 불필요. macOS 메뉴바·시계는 Chrome 위쪽에 그대로 보임.
+
 ## Setup (최초 1회)
 
 ```bash
@@ -77,7 +79,7 @@ output/
 4. **Chain of custody** — `_raw_{POST_ID}.json` + sha256 자동 저장. 보고서에 명시.
 5. **포맷 1mm 도 안 바꿈** — 11컬럼 엑셀, 한국어 라벨(원댓글/대댓글), 위계 명명, 모두 IG·YT 동일.
 6. **자동 regroup 금지** — mention/멘션을 답글로 재분류하지 마라. 데이터 손실 위험.
-7. **캡처 단계 hands-off** — Step 3 (캡처) 중 Chrome 창 위에 다른 창 띄우거나 마우스·키보드 조작 금지. 풀스크린 캡처라 즉시 증거 손상. 외부 모니터 있으면 `--display 2` 로 본인 모니터 자유. Step 2(메타)·Step 4(엑셀)은 백그라운드라 다른 작업 OK.
+7. **캡처 단계 hands-off** — Step 3 (캡처) 중 Chrome 을 클릭 아닌 곳으로 포커스 이동 / 다른 앱 클릭 금지. Chrome 이 maximized 라 다른 앱이 뒤에 가려있는 건 OK — 클릭으로 포그라운드만 바꾸지 않으면 됨. 외부 모니터 있으면 `--display 2` 로 본인 모니터 자유. Step 2(메타)·Step 4(엑셀)은 백그라운드라 다른 작업 OK.
 8. **브라우저 유지** — `run.py` 가 Chrome 1회 launch 후 4단계 끝까지 유지. 단계 사이에서 절대 close 금지. 각 스텝 스크립트는 `--cdp` 로 attach.
 
 ## Pitfalls — 모르면 시간 낭비
