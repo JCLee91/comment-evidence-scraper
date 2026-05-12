@@ -38,7 +38,7 @@ python ~/.claude/skills/comment-evidence-scraper/scripts/run.py <URL>
 | 4. 엑셀 | `build_excel.py` (공통 11컬럼) | (동일) |
 
 옵션:
-- `--limit N` (YT root N개 — 빠른 검증)
+- `--limit N` (IG·YT root N개 — 빠른 검증)
 - `--no-replies` (답글 스킵 — 빠른 검증)
 - `--skip-capture` (메타만)
 - `--old-xlsx PATH` (IG 전용 — 이전 xlsx 메타 재사용)

@@ -251,6 +251,8 @@ async def fetch_child_comments(page, media_id: str, parent_pk: str, raw_log: lis
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="root 댓글 상한 (0=무제한, sanity check 전용 — 법률 자료 금지)")
     ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 어태치)")
     args = ap.parse_args()
     raw_url = args.url.split("?")[0].rstrip("/")
@@ -302,6 +304,10 @@ async def main():
         # root 댓글 양방향 cursor 호출
         print("\n[step] root comments API call")
         root_raw = await fetch_all_root_comments(page, media_id, raw_log)
+
+        if args.limit and len(root_raw) > args.limit:
+            print(f"[limit] root 댓글 {len(root_raw)} → {args.limit}개로 제한 (sanity check)")
+            root_raw = root_raw[:args.limit]
 
         # 답글 보강
         print(f"\n[step] child_comments 보강")

@@ -201,11 +201,10 @@ async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
                 else:
                     cmd = [PYTHON, str(SCRIPTS_DIR / f"{platform}_collect_meta.py"),
                            args.url, "--cdp", CDP_URL]
-                    if platform == "yt":
-                        if args.limit:
-                            cmd += ["--limit", str(args.limit)]
-                        if args.no_replies:
-                            cmd += ["--no-replies"]
+                    if args.limit:
+                        cmd += ["--limit", str(args.limit)]
+                    if platform == "yt" and args.no_replies:
+                        cmd += ["--no-replies"]
                     await run_step(f"메타 수집 ({platform.upper()} API)", cmd)
             else:
                 print(f"\n[SKIP] 메타 이미 있음: {progress_path}")
@@ -226,7 +225,8 @@ async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
 async def main_async():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
-    ap.add_argument("--limit", type=int, default=0, help="root 댓글 상한 (YT 테스트용)")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="root 댓글 상한 (IG·YT 공통, sanity check 전용)")
     ap.add_argument("--no-replies", action="store_true", help="답글 수집 스킵 (YT 테스트용)")
     ap.add_argument("--skip-preflight", action="store_true")
     ap.add_argument("--skip-capture", action="store_true")
