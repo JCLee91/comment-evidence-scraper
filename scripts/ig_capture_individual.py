@@ -287,6 +287,8 @@ async def main():
     ap.add_argument("--display", type=int, default=1,
                     help="캡처할 모니터 (mss 인덱스, 1=주모니터, 2,3=보조). 0=전체합본")
     ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 어태치)")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="root 댓글 N개까지만 캡처 (sanity check 전용)")
     args = ap.parse_args()
     progress_path = Path(args.progress)
     monitor = args.display
@@ -295,11 +297,15 @@ async def main():
     post_id = data["post_id"]
     post_url = data["post_url"]
     folder_name = data.get("folder_name") or post_id  # backward-compat
-    total_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
+    threads = data["threads"]
+    if args.limit:
+        threads = threads[:args.limit]
+        print(f"[info] --limit {args.limit} 적용: root {len(threads)}개로 제한")
+    total_count = sum(1 + len(t.get("replies", [])) for t in threads)
     post_dir = PROJECT / "output" / folder_name / f"스크린샷({total_count})"
 
     targets = []
-    for ti, t in enumerate(data["threads"], start=1):
+    for ti, t in enumerate(threads, start=1):
         # root 먼저
         root = t["root"]
         uname = root["username"]
@@ -329,6 +335,7 @@ async def main():
         await ctx.route("**/api/v1/friendships/**", block_follow)
 
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        prof_page = await ctx.new_page()  # 프로필 캡처 전용 — 댓글 페이지 보존
 
         if not await is_logged_in(ctx):
             print("[로그인 필요] 직접 로그인. 5분 대기.")
@@ -359,9 +366,10 @@ async def main():
             return 2
 
         # 메타 기준 타겟 댓글 수 계산 (lazy load 종료 기준)
-        target_comment_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
-        # 답글 펼치기 전이라 댓글만 카운트하면 됨 (시간 element 는 댓글당 1개)
-        target_root_count = len(data["threads"])
+        # --limit 시: 슬라이스 기준 (sanity check 속도 우선, 일부 row not found 허용)
+        # 전수: 메타 전체 기준 (정확성 우선)
+        target_comment_count = sum(1 + len(t.get("replies", [])) for t in threads)
+        target_root_count = len(threads)
         print(f"[step] 댓글 더 불러오기 (target={target_root_count}개 원댓글)...")
         more_clicks = await click_load_more_comments(page, target_count=target_root_count)
         print(f"  {more_clicks} 클릭")
@@ -448,7 +456,7 @@ async def main():
         print(f"\n[step] 프로필 캡처 시작")
         unique_users = []  # (ti, ri or None, uname) — ri=None 이면 root
         seen = set()
-        for ti, t in enumerate(data["threads"], start=1):
+        for ti, t in enumerate(threads, start=1):
             u = t["root"].get("username")
             if u and u not in seen:
                 seen.add(u)
@@ -474,23 +482,24 @@ async def main():
                 continue
             url = f"https://www.instagram.com/{uname}/"
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                await prof_page.goto(url, wait_until="domcontentloaded", timeout=25000)
                 await asyncio.sleep(3.5)
             except Exception as e:
                 print(f"  ✗ {idx}/{len(unique_users)} {uname}: navigate {e}")
                 p_failed.append(uname)
                 continue
 
-            sig = await detect_stop(page)
+            sig = await detect_stop(prof_page)
             if sig:
                 print(f"\n[STOP] 프로필 캡처 중 막힘: {sig}")
                 break
 
-            await page.evaluate("window.scrollTo(0, 0)")
-            await page.mouse.move(0, 0)
+            await prof_page.bring_to_front()
+            await prof_page.evaluate("window.scrollTo(0, 0)")
+            await prof_page.mouse.move(0, 0)
             await asyncio.sleep(0.5)
             try:
-                await fullscreen_capture(page, out, monitor=monitor)
+                await fullscreen_capture(prof_page, out, monitor=monitor)
                 size_kb = out.stat().st_size / 1024
                 print(f"  ✓ {idx}/{len(unique_users)} {uname}: {size_kb:.0f} KB")
                 p_captured += 1

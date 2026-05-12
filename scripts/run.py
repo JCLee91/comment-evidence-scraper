@@ -4,7 +4,7 @@ comment-evidence-scraper — URL 보고 Instagram / YouTube 자동 분기.
 
 사용법:
   python run.py <url>
-  python run.py <url> --limit 20             # 테스트 (root N개만, YT)
+  python run.py <url> --limit 20             # 테스트 (IG·YT 공통, root N개만)
   python run.py <url> --no-replies           # 답글 스킵 (테스트, YT)
   python run.py <url> --old-xlsx PATH        # IG 전용: 이전 xlsx 메타 재사용
   python run.py <url> --skip-capture         # 메타만, 캡처 스킵
@@ -162,18 +162,46 @@ def verify(post_dir: Path, data: dict) -> bool:
     return not missing_folders and not missing_files
 
 
+def sanitize_chrome_session(session_dir: Path) -> None:
+    """이전 작업이 비정상 종료(예: pkill)됐을 때 남는 dirty state 를 정리.
+    안 정리하면 다음 launch 시 '예기치 못하게 종료' 배너 + '복원' 탭이 떠서
+    풀스크린 스크린샷에 그대로 박힘 (법률 자료 무결성 침해)."""
+    pref_path = session_dir / "Default" / "Preferences"
+    if not pref_path.exists():
+        return
+    try:
+        prefs = json.loads(pref_path.read_text(encoding="utf-8"))
+        prof = prefs.setdefault("profile", {})
+        if prof.get("exit_type") != "Normal" or prof.get("exited_cleanly") is False:
+            print(f"[browser] dirty shutdown 흔적 감지 → 정리")
+        prof["exit_type"] = "Normal"
+        prof["exited_cleanly"] = True
+        pref_path.write_text(json.dumps(prefs), encoding="utf-8")
+    except Exception as e:
+        print(f"[warn] Preferences 정리 실패 (무시): {e}")
+
+
 async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
     """브라우저 기반 단계들 — Chrome 1회 launch, 같은 인스턴스 공유."""
+    session_dir = WORK_DIR / "chrome_session"
+    sanitize_chrome_session(session_dir)
     stealth = Stealth()
     async with stealth.use_async(async_playwright()) as p:
         print(f"\n[browser] persistent context launch (CDP :{CDP_PORT})")
         ctx = await p.chromium.launch_persistent_context(
-            str(WORK_DIR / "chrome_session"),
+            str(session_dir),
             channel="chrome",
             headless=False,
             no_viewport=True,  # maximized 윈도우 그대로 — viewport 강제 X
             locale="ko-KR",
-            args=[f"--remote-debugging-port={CDP_PORT}", "--start-maximized"],
+            args=[
+                f"--remote-debugging-port={CDP_PORT}",
+                "--start-maximized",
+                "--disable-session-crashed-bubble",  # dirty shutdown 시 복원 배너 차단
+                "--hide-crash-restore-bubble",       # 구버전 대체 플래그
+                "--no-default-browser-check",        # 기본 브라우저 확인 다이얼로그 차단
+                "--no-first-run",
+            ],
         )
         try:
             if not await wait_for_cdp():
@@ -211,11 +239,14 @@ async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
 
             # 3. 캡처
             if not args.skip_capture:
+                cmd = [PYTHON, str(SCRIPTS_DIR / f"{platform}_capture_individual.py"),
+                       str(progress_path), "--display", str(args.display),
+                       "--cdp", CDP_URL]
+                if args.limit:
+                    cmd += ["--limit", str(args.limit)]
                 await run_step(
                     f"캡처 ({platform.upper()} UI, display={args.display})",
-                    [PYTHON, str(SCRIPTS_DIR / f"{platform}_capture_individual.py"),
-                     str(progress_path), "--display", str(args.display),
-                     "--cdp", CDP_URL],
+                    cmd,
                 )
         finally:
             print(f"\n[browser] 파이프라인 종료 → context close")
@@ -237,6 +268,8 @@ async def main_async():
                     help="캡처할 모니터 (1=주모니터, 2,3=보조). "
                          "외부 모니터 활용 시 캡처 중 본인 모니터로 다른 작업 가능")
     args = ap.parse_args()
+    if args.limit < 0:
+        ap.error(f"--limit 음수 불가 (입력: {args.limit})")
 
     platform = detect_platform(args.url)
     post_id = parse_id(args.url, platform)
@@ -255,16 +288,18 @@ async def main_async():
     # 4. 누락 보정 + 5. 검증 (브라우저 불필요)
     data = json.loads(progress_path.read_text(encoding="utf-8"))
     folder_name = data.get("folder_name") or post_id  # backward-compat
+    if args.limit:
+        data["threads"] = data["threads"][:args.limit]
     total_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
     post_dir = WORK_DIR / "output" / folder_name / f"스크린샷({total_count})"
     fill_missing(post_dir, data)
     ok = verify(post_dir, data)
 
     # 6. 엑셀 빌드 (브라우저 불필요)
-    run_step_sync(
-        "엑셀 빌드 (11컬럼)",
-        [PYTHON, str(SCRIPTS_DIR / "build_excel.py"), str(progress_path)],
-    )
+    excel_cmd = [PYTHON, str(SCRIPTS_DIR / "build_excel.py"), str(progress_path)]
+    if args.limit:
+        excel_cmd += ["--limit", str(args.limit)]
+    run_step_sync("엑셀 빌드 (11컬럼)", excel_cmd)
 
     out = WORK_DIR / "output" / folder_name / "result.xlsx"
     print(f"\n{'='*60}\n[DONE] 산출물 폴더: {WORK_DIR / 'output' / folder_name}")

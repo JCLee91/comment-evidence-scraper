@@ -38,13 +38,17 @@ python ~/.claude/skills/comment-evidence-scraper/scripts/run.py <URL>
 | 4. 엑셀 | `build_excel.py` (공통 11컬럼) | (동일) |
 
 옵션:
-- `--limit N` (IG·YT root N개 — 빠른 검증)
+- `--limit N` (IG·YT root N개로 제한 — 빠른 검증. 메타·캡처·엑셀 **모든 단계**에 적용)
 - `--no-replies` (답글 스킵 — 빠른 검증)
 - `--skip-capture` (메타만)
 - `--old-xlsx PATH` (IG 전용 — 이전 xlsx 메타 재사용)
 - `--display N` (캡처할 모니터, 1=주, 2,3=보조. 외부 모니터 있으면 `--display 2` → 본인 모니터로 다른 작업 OK)
 
 > ⚠️ **법률 자료는 `--limit` / `--no-replies` / `--skip-capture` 금지.** 이 옵션들은 sanity check 전용. 부분 결과물을 절대 zip 패키징해서 전달하지 말 것. 산출물은 항상 **전수 수집 완료본** 1개만.
+
+> 📌 **`--limit N` 의미** — 메타 수집 단계에서 root N개로 자르고, 그 슬라이스가 캡처·검증·엑셀까지 그대로 흘러감. **기존 `.progress_*.json` 이 있어 메타 단계가 SKIP 되어도** `run.py` 가 in-memory 슬라이스 + capture/excel 에 `--limit` 전달로 동일하게 N개만 처리. 즉, "메타는 전수, 캡처만 10개" 같은 어긋난 상태가 발생하지 않음.
+> - IG 캡처의 lazy load 도 슬라이스 기준 (sanity check 속도 우선). 메타 수집 순서와 UI 표시 순서가 일치 보장 없어 일부 username 이 `row not found` 가능 — 의도된 trade-off. 전수 작업은 `--limit` 안 쓰면 자동으로 전체 lazy load.
+> - `--limit N` 산출물은 `output/{folder}/스크린샷({n_sliced})/` 에 들어감. 전수 작업이 `output/{folder}/스크린샷({n_full})/` 에 있어도 **별도 디렉토리**라 공존 가능. zip 패키징 전 어느 폴더를 전달하는지 반드시 확인.
 
 플랫폼별 디테일은 `references/instagram-api.md`·`references/youtube-api.md` 필독.
 
@@ -81,6 +85,8 @@ output/
 6. **자동 regroup 금지** — mention/멘션을 답글로 재분류하지 마라. 데이터 손실 위험.
 7. **캡처 단계 hands-off** — Step 3 (캡처) 중 Chrome 을 클릭 아닌 곳으로 포커스 이동 / 다른 앱 클릭 금지. Chrome 이 maximized 라 다른 앱이 뒤에 가려있는 건 OK — 클릭으로 포그라운드만 바꾸지 않으면 됨. 외부 모니터 있으면 `--display 2` 로 본인 모니터 자유. Step 2(메타)·Step 4(엑셀)은 백그라운드라 다른 작업 OK.
 8. **브라우저 유지** — `run.py` 가 Chrome 1회 launch 후 4단계 끝까지 유지. 단계 사이에서 절대 close 금지. 각 스텝 스크립트는 `--cdp` 로 attach.
+9. **Chrome 절대 죽이지 마 (pkill·강제종료 금지)** — `pkill -f run.py` / `pkill -f ig_capture` / Chrome 강제 종료 모두 금지. Chrome 이 dirty shutdown 되면 chrome_session 의 `profile.exit_type=Crashed` 가 남고, 다음 launch 시 **"예기치 못하게 종료되었습니다 / 복원" 배너가 풀스크린 캡처에 박힘** → 법률 자료 무결성 침해. `run.py` 의 `sanitize_chrome_session()` 이 launch 직전 자동 정리하고 `--disable-session-crashed-bubble` 도 걸지만 100% 보장 아님. 옵션 변경/패치는 **작업 시작 *전*에 끝낼 것**. 부득이 중단 필요 시 Ctrl-C (SIGINT) 로만 — asyncio 가 `finally: ctx.close()` 에 도달.
+10. **프로필 캡처는 별도 탭** — IG·YT 둘 다 댓글 캡처 page 와 별개의 `prof_page = ctx.new_page()` 에서 navigate. 댓글 페이지가 reload/lazy load 손실 안 입게.
 
 ## Pitfalls — 모르면 시간 낭비
 
@@ -112,6 +118,9 @@ output/
 - 사용자 결과 폴더 외 수정
 - IG 차단 메시지 후 즉시 재시도
 - YT 답글 단일 토큰 chain
+- **`pkill` / 강제 종료로 작업 중단** (Critical Rule 9 참조 — 다음 캡처에 Chrome 복원 배너 박힘)
+- **작업 도중 옵션 변경 / 스크립트 패치** (반드시 시작 전에 plan + 패치 완료 → 한 번 launch 로 끝까지)
+- IG 프로필 캡처를 댓글 캡처 page 에서 navigate (댓글 페이지 lazy load 손실)
 
 ## References
 

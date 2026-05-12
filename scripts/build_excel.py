@@ -11,6 +11,7 @@ K:  output/{POST}/profiles/{username}.png  (그 계정 프로필 페이지 캡�
 Usage:
   build_excel.py [progress.json] [out.xlsx]
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -110,11 +111,14 @@ def _safe_name(name):
     return re.sub(r"[^A-Za-z0-9._\-가-힣]+", "_", name).strip("_") or "unknown"
 
 
-def build(progress_path: Path, out_xlsx: Path):
+def build(progress_path: Path, out_xlsx: Path, limit: int = 0):
     data = json.loads(progress_path.read_text(encoding="utf-8"))
     post_id = data["post_id"]
     folder_name = data.get("folder_name") or post_id  # backward-compat
-    total_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
+    threads = data["threads"]
+    if limit:
+        threads = threads[:limit]
+    total_count = sum(1 + len(t.get("replies", [])) for t in threads)
     # 스크린샷 폴더: output/{folder_name}/스크린샷(N)/
     post_dir = progress_path.resolve().parent / folder_name / f"스크린샷({total_count})"
 
@@ -126,7 +130,7 @@ def build(progress_path: Path, out_xlsx: Path):
     cur = 2
     embedded_comments = 0
     embedded_profiles = 0
-    for ti, thread in enumerate(data["threads"], start=1):
+    for ti, thread in enumerate(threads, start=1):
         # 위계 표기: 원댓글 = NN_user, 대댓글 = NN_RR_user
         items = [(None, "원댓글", thread["root"])]   # ri=None → root
         for ri, reply in enumerate(thread.get("replies", []), start=1):
@@ -156,15 +160,20 @@ def build(progress_path: Path, out_xlsx: Path):
 
 
 if __name__ == "__main__":
-    progress = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PROGRESS
-    if len(sys.argv) > 2:
-        out = Path(sys.argv[2])
+    ap = argparse.ArgumentParser()
+    ap.add_argument("progress", nargs="?", default=str(DEFAULT_PROGRESS))
+    ap.add_argument("out", nargs="?", default=None)
+    ap.add_argument("--limit", type=int, default=0,
+                    help="root 댓글 N개까지만 (sanity check 전용)")
+    args = ap.parse_args()
+    progress = Path(args.progress)
+    if args.out:
+        out = Path(args.out)
     else:
-        # output/{folder_name}/result.xlsx
         data = json.loads(progress.read_text(encoding="utf-8"))
         folder_name = data.get("folder_name") or data["post_id"]
         out = progress.resolve().parent / folder_name / "result.xlsx"
-    saved, ec, ep, rows = build(progress, out)
+    saved, ec, ep, rows = build(progress, out, limit=args.limit)
     print(f"saved: {saved}")
     print(f"data rows: {rows}")
     print(f"embedded comment images: {ec}")
