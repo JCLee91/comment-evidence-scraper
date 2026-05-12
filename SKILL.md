@@ -87,7 +87,7 @@ output/
 8. **브라우저 유지** — `run.py` 가 Chrome 1회 launch 후 4단계 끝까지 유지. 단계 사이에서 절대 close 금지. 각 스텝 스크립트는 `--cdp` 로 attach.
 9. **Chrome 절대 죽이지 마 (pkill·강제종료 금지)** — `pkill -f run.py` / `pkill -f ig_capture` / Chrome 강제 종료 모두 금지. Chrome 이 dirty shutdown 되면 chrome_session 의 `profile.exit_type=Crashed` 가 남고, 다음 launch 시 **"예기치 못하게 종료되었습니다 / 복원" 배너가 풀스크린 캡처에 박힘** → 법률 자료 무결성 침해. `run.py` 의 `sanitize_chrome_session()` 이 launch 직전 자동 정리하고 `--disable-session-crashed-bubble` 도 걸지만 100% 보장 아님. 옵션 변경/패치는 **작업 시작 *전*에 끝낼 것**. 부득이 중단 필요 시 Ctrl-C (SIGINT) 로만 — asyncio 가 `finally: ctx.close()` 에 도달.
 10. **프로필 캡처는 별도 탭** — IG·YT 둘 다 댓글 캡처 page 와 별개의 `prof_page = ctx.new_page()` 에서 navigate. 댓글 페이지가 reload/lazy load 손실 안 입게.
-11. **잠금/스크린세이버 차단** — `mss` 는 OS 레벨이라 위에 뜬 화면 그대로 캡처. 잠금화면 / 스크린세이버 발동 시 댓글 PNG 전부 그 화면이 됨 (macOS Sonoma+ 는 검은 화면). `run.py` 가 macOS 에서 `caffeinate -di` 백그라운드 spawn 으로 display/idle sleep 차단. 그래도 사용자가 *수동으로* Cmd+Ctrl+Q 잠그면 못 막음 — 캡처 중 절대 금지.
+11. **잠금/스크린세이버 차단** — `mss` 는 OS 레벨이라 위에 뜬 화면 그대로 캡처. 잠금화면 / 스크린세이버 발동 시 댓글 PNG 전부 그 화면이 됨 (macOS Sonoma+ 는 검은 화면). `run.py` 의 `prevent_sleep()` 이 자동 차단 — macOS 는 `caffeinate -di`, Windows 는 `SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)`. Linux 는 미지원이라 시스템 설정에서 수동 차단. 그리고 어떤 OS 든 *수동* 잠금 (macOS `Cmd+Ctrl+Q` / Windows `Win+L`) 은 못 막음 — 캡처 중 절대 금지.
 
 ## Pitfalls — 모르면 시간 낭비
 

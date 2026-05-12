@@ -162,34 +162,63 @@ def verify(post_dir: Path, data: dict) -> bool:
     return not missing_folders and not missing_files
 
 
-def start_caffeinate() -> subprocess.Popen | None:
-    """macOS 에서 작업 동안 디스플레이 sleep / idle sleep 차단.
-    안 막으면 잠금화면 / 스크린세이버가 풀스크린 캡처에 그대로 박힘
-    (mss 가 OS 레벨이라 위에 뜬 화면을 그대로 잡음)."""
-    if sys.platform != "darwin":
-        return None
-    try:
-        proc = subprocess.Popen(
-            ["caffeinate", "-di"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print(f"[caffeinate] display + idle sleep 차단 (pid {proc.pid})")
-        return proc
-    except FileNotFoundError:
-        print("[warn] caffeinate 없음 — 잠금/스크린세이버 수동 차단 필요")
-        return None
-
-
-def stop_caffeinate(proc: subprocess.Popen | None) -> None:
-    if proc is None:
-        return
-    try:
-        proc.terminate()
-        proc.wait(timeout=3)
-    except Exception:
+def prevent_sleep():
+    """작업 동안 디스플레이/idle sleep 차단 (잠금화면이 캡처에 박히는 사고 방지).
+    - macOS: `caffeinate -di` 백그라운드 spawn
+    - Windows: `SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)`
+    - 기타: 동작 안 함 (Linux 등 — 시스템 설정에서 수동 차단 필요)
+    Returns: stop 함수에 넘길 opaque handle (None=동작 안 함)."""
+    if sys.platform == "darwin":
         try:
-            proc.kill()
+            proc = subprocess.Popen(
+                ["caffeinate", "-di"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print(f"[sleep-block] caffeinate -di (pid {proc.pid})")
+            return ("darwin", proc)
+        except FileNotFoundError:
+            print("[warn] caffeinate 없음 — 수동 차단 필요")
+            return None
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ES_CONTINUOUS = 0x80000000
+            ES_SYSTEM_REQUIRED = 0x00000001
+            ES_DISPLAY_REQUIRED = 0x00000002
+            rc = ctypes.windll.kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+            )
+            if rc == 0:
+                print("[warn] SetThreadExecutionState 실패")
+                return None
+            print("[sleep-block] Win32 SetThreadExecutionState 적용")
+            return ("win32", None)
+        except Exception as e:
+            print(f"[warn] SetThreadExecutionState 예외: {e}")
+            return None
+    print(f"[warn] sleep 차단 미지원 플랫폼 ({sys.platform}) — 수동 차단 필요")
+    return None
+
+
+def restore_sleep(handle) -> None:
+    if handle is None:
+        return
+    kind, proc = handle
+    if kind == "darwin" and proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    elif kind == "win32":
+        try:
+            import ctypes
+            ES_CONTINUOUS = 0x80000000
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
         except Exception:
             pass
 
@@ -314,7 +343,7 @@ async def main_async():
     print(f"#  cwd: {WORK_DIR}")
     print(f"{'#'*60}")
 
-    caffeinate_proc = start_caffeinate()
+    sleep_handle = prevent_sleep()
     try:
         # 브라우저 기반 단계 (preflight + meta + capture) — Chrome 1회만
         await run_pipeline(args, platform, post_id, progress_path)
@@ -342,7 +371,7 @@ async def main_async():
             print("⚠️  검증 미통과 — 수동 확인 필요 (누락된 폴더/파일 있음)")
             sys.exit(2)
     finally:
-        stop_caffeinate(caffeinate_proc)
+        restore_sleep(sleep_handle)
 
 
 def main():
