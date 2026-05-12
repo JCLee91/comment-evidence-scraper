@@ -26,6 +26,7 @@ from playwright_stealth import Stealth
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fullscreen import fullscreen_capture  # noqa: E402
+from _browser import get_context, safe_close  # noqa: E402
 
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
@@ -227,6 +228,7 @@ async def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--display", type=int, default=1,
                     help="캡처할 모니터 (mss 인덱스, 1=주모니터, 2,3=보조). 0=전체합본")
+    ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 어태치)")
     args = ap.parse_args()
 
     progress_path = Path(args.progress).resolve()
@@ -258,8 +260,9 @@ async def main():
 
     stealth = Stealth()
     async with stealth.use_async(async_playwright()) as p:
-        ctx = await p.chromium.launch_persistent_context(
-            USER_DATA_DIR, channel="chrome", headless=False,
+        ctx, owns_ctx = await get_context(
+            p, args.cdp, USER_DATA_DIR,
+            channel="chrome", headless=False,
             viewport=VIEWPORT, locale="ko-KR",
         )
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
@@ -314,7 +317,7 @@ async def main():
             success += 1
 
         print(f"\n[done] {success}/{len(targets)} processed, miss={miss}")
-        await ctx.close()
+        await safe_close(ctx, owns_ctx)
 
 
 if __name__ == "__main__":

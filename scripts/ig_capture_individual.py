@@ -29,6 +29,7 @@ from playwright_stealth import Stealth
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fullscreen import fullscreen_capture  # noqa: E402
+from _browser import get_context, safe_close  # noqa: E402
 
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
@@ -285,6 +286,7 @@ async def main():
     ap.add_argument("progress", nargs="?", default=str(DEFAULT_PROGRESS))
     ap.add_argument("--display", type=int, default=1,
                     help="캡처할 모니터 (mss 인덱스, 1=주모니터, 2,3=보조). 0=전체합본")
+    ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 어태치)")
     args = ap.parse_args()
     progress_path = Path(args.progress)
     monitor = args.display
@@ -313,12 +315,10 @@ async def main():
 
     stealth = Stealth()
     async with stealth.use_async(async_playwright()) as p:
-        ctx = await p.chromium.launch_persistent_context(
-            USER_DATA_DIR,
-            channel="chrome",
-            headless=False,
-            viewport=VIEWPORT,
-            locale="ko-KR",
+        ctx, owns_ctx = await get_context(
+            p, args.cdp, USER_DATA_DIR,
+            channel="chrome", headless=False,
+            viewport=VIEWPORT, locale="ko-KR",
         )
 
         async def block_follow(route, request):
@@ -343,7 +343,7 @@ async def main():
                     break
             else:
                 print("[abort] 로그인 timeout")
-                await ctx.close()
+                await safe_close(ctx, owns_ctx)
                 return 1
         else:
             print("[ok] 기존 세션 사용")
@@ -355,7 +355,7 @@ async def main():
         sig = await detect_stop(page)
         if sig:
             print(f"[abort] 세션 막힘: {sig}")
-            await ctx.close()
+            await safe_close(ctx, owns_ctx)
             return 2
 
         # 메타 기준 타겟 댓글 수 계산 (lazy load 종료 기준)
@@ -504,7 +504,7 @@ async def main():
         if p_failed:
             print(f"  실패: {p_failed}")
 
-        await ctx.close()
+        await safe_close(ctx, owns_ctx)
     return 0
 
 

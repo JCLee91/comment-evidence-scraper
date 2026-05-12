@@ -26,6 +26,9 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _browser import get_context, safe_close  # noqa: E402
+
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
 VIEWPORT = {"width": 1280, "height": 800}
@@ -301,6 +304,7 @@ async def main():
                     help="root 댓글 수집 상한 (0=무제한)")
     ap.add_argument("--no-replies", action="store_true",
                     help="답글 수집 건너뛰기 (테스트용)")
+    ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 어태치)")
     args = ap.parse_args()
 
     video_id = parse_video_id(args.url)
@@ -316,8 +320,9 @@ async def main():
 
     stealth = Stealth()
     async with stealth.use_async(async_playwright()) as p:
-        ctx = await p.chromium.launch_persistent_context(
-            USER_DATA_DIR, channel="chrome", headless=False,
+        ctx, owns_ctx = await get_context(
+            p, args.cdp, USER_DATA_DIR,
+            channel="chrome", headless=False,
             viewport=VIEWPORT, locale="ko-KR",
         )
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
@@ -329,7 +334,7 @@ async def main():
         cfg = await page.evaluate(EXTRACT_CFG_JS)
         if not cfg.get("api_key"):
             print("[abort] api_key 없음")
-            await ctx.close()
+            await safe_close(ctx, owns_ctx)
             return 1
         api_key = cfg["api_key"]
         ctx_obj = cfg["context"]
@@ -344,7 +349,7 @@ async def main():
         token = await page.evaluate(FIND_COMMENTS_CONTINUATION_JS)
         if not token:
             print("[abort] comments continuation token 없음")
-            await ctx.close()
+            await safe_close(ctx, owns_ctx)
             return 1
         print(f"[ok] init continuation: ...{token[-16:]}")
 
@@ -449,7 +454,7 @@ async def main():
                 if total_added:
                     print(f"  [reply {i}/{len(targets)}] {parent_cid} TOTAL: {total_added} replies in {rep_page} pages")
 
-        await ctx.close()
+        await safe_close(ctx, owns_ctx)
 
     # ---- raw 저장 ----
     raw_path = PROJECT / "output" / f"_raw_{video_id}.json"

@@ -13,6 +13,7 @@
 Usage:
   python collect_meta.py <post_url>
 """
+import argparse
 import asyncio
 import json
 import random
@@ -25,6 +26,9 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _browser import get_context, safe_close  # noqa: E402
 
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
@@ -245,10 +249,11 @@ async def fetch_child_comments(page, media_id: str, parent_pk: str, raw_log: lis
 # main --------------------------------------------------------------------
 
 async def main():
-    if len(sys.argv) < 2:
-        print("Usage: collect_meta.py <post_url>")
-        return 1
-    raw_url = sys.argv[1].split("?")[0].rstrip("/")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("url")
+    ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 어태치)")
+    args = ap.parse_args()
+    raw_url = args.url.split("?")[0].rstrip("/")
     shortcode = parse_post(raw_url)
     media_id = shortcode_to_media_id(shortcode)
     # /p/ 정규화 (Reels 도 마찬가지로 /p/ 가 댓글 API 잘 응답)
@@ -263,12 +268,10 @@ async def main():
 
     stealth = Stealth()
     async with stealth.use_async(async_playwright()) as p:
-        ctx = await p.chromium.launch_persistent_context(
-            USER_DATA_DIR,
-            channel="chrome",
-            headless=False,
-            viewport=VIEWPORT,
-            locale="ko-KR",
+        ctx, owns_ctx = await get_context(
+            p, args.cdp, USER_DATA_DIR,
+            channel="chrome", headless=False,
+            viewport=VIEWPORT, locale="ko-KR",
         )
 
         async def block_follow(route, request):
@@ -288,7 +291,7 @@ async def main():
                     break
             else:
                 print("[abort] 로그인 미완료")
-                await ctx.close()
+                await safe_close(ctx, owns_ctx)
                 return 1
         print("[ok] logged in")
 
@@ -328,7 +331,7 @@ async def main():
                 print(f"  [{i}/{len(targets)}] {pk}: error {e}")
             await asyncio.sleep(random.uniform(0.3, 0.8))
 
-        await ctx.close()
+        await safe_close(ctx, owns_ctx)
 
     # raw JSON 보존 (법적 증거)
     raw_path = PROJECT / "output" / f"_raw_{shortcode}.json"

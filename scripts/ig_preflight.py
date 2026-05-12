@@ -17,6 +17,7 @@ Usage:
 
 Default URL: https://www.instagram.com/  (메인 페이지로 sanity check)
 """
+import argparse
 import asyncio
 import re
 import sys
@@ -24,6 +25,9 @@ from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _browser import get_context, safe_close  # noqa: E402
 
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
@@ -68,7 +72,12 @@ async def diagnose(page):
 
 
 async def main():
-    url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
+    ap = argparse.ArgumentParser()
+    ap.add_argument("url", nargs="?", default=DEFAULT_URL)
+    ap.add_argument("--cdp", default=None, help="CDP URL (run.py 가 띄운 Chrome 에 어태치)")
+    args = ap.parse_args()
+    url = args.url
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = PROJECT / "output" / f"_preflight_{ts}.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,12 +87,10 @@ async def main():
 
     stealth = Stealth()
     async with stealth.use_async(async_playwright()) as p:
-        ctx = await p.chromium.launch_persistent_context(
-            USER_DATA_DIR,
-            channel="chrome",
-            headless=False,
-            viewport=VIEWPORT,
-            locale="ko-KR",
+        ctx, owns_ctx = await get_context(
+            p, args.cdp, USER_DATA_DIR,
+            channel="chrome", headless=False,
+            viewport=VIEWPORT, locale="ko-KR",
         )
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
@@ -100,7 +107,7 @@ async def main():
                     break
             else:
                 print("[preflight] 로그인 timeout")
-                await ctx.close()
+                await safe_close(ctx, owns_ctx)
                 return 1
 
         try:
@@ -111,7 +118,7 @@ async def main():
                 await page.screenshot(path=str(out_path))
             except Exception:
                 pass
-            await ctx.close()
+            await safe_close(ctx, owns_ctx)
             return 2
 
         await asyncio.sleep(4)
@@ -128,11 +135,11 @@ async def main():
                   for s in findings)
         if bad:
             print("\n⚠️  세션 막힘 감지. 본 작업 진행 금지. 1~2시간 대기 후 재시도.")
-            await ctx.close()
+            await safe_close(ctx, owns_ctx)
             return 3
 
         print("\n✓ 정상. 본 작업 진행 가능. (스크린샷 직접 확인 권장)")
-        await ctx.close()
+        await safe_close(ctx, owns_ctx)
     return 0
 
 

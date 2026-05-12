@@ -12,19 +12,23 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-try:
-    import mss
-    import mss.tools
-except ImportError as e:
-    raise ImportError(
-        "mss 가 설치되지 않았습니다. 설치:\n"
-        "  pip install mss\n"
-        "또는 venv 활성화 후:\n"
-        "  pip install -r requirements.txt"
-    ) from e
-
 
 SETTLE_SEC = 0.3  # bring_to_front 후 안정화 대기 (창 전환 애니메이션)
+
+
+def _import_mss():
+    """mss 를 지연 import — --help 같은 메타 작업에서 import 비용·에러 회피."""
+    try:
+        import mss
+        import mss.tools
+        return mss
+    except ImportError as e:
+        raise ImportError(
+            "mss 가 설치되지 않았습니다. 설치:\n"
+            "  pip install mss\n"
+            "또는 venv 활성화 후:\n"
+            "  pip install -r requirements.txt"
+        ) from e
 
 
 async def fullscreen_capture(page, dst_png: Path, monitor: int = 1) -> bool:
@@ -40,6 +44,7 @@ async def fullscreen_capture(page, dst_png: Path, monitor: int = 1) -> bool:
     Returns:
         True 면 성공.
     """
+    mss = _import_mss()
     dst_png.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -64,6 +69,7 @@ async def fullscreen_capture(page, dst_png: Path, monitor: int = 1) -> bool:
 
 def list_monitors() -> list[dict]:
     """디버깅용 — 시스템이 인식한 모니터 목록 반환."""
+    mss = _import_mss()
     with mss.mss() as sct:
         return list(sct.monitors)
 

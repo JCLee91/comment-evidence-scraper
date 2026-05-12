@@ -8,25 +8,32 @@ comment-evidence-scraper — URL 보고 Instagram / YouTube 자동 분기.
   python run.py <url> --no-replies           # 답글 스킵 (테스트, YT)
   python run.py <url> --old-xlsx PATH        # IG 전용: 이전 xlsx 메타 재사용
   python run.py <url> --skip-capture         # 메타만, 캡처 스킵
+  python run.py <url> --display 2            # 캡처 모니터 (외부 모니터)
 
-산출물 (cwd 기준):
-  output/.progress_{POST_ID}.json
-  output/_raw_{POST_ID}.json + .sha256
-  output/{POST_ID}/{NN}_원댓글_{username}/{댓글,프로필}.png
-  output/{POST_ID}/{NN}_대댓글_{username}/{댓글,프로필}.png
-  output/result_{POST_ID}.xlsx (11컬럼 엑셀)
+브라우저 라이프사이클:
+  run.py 가 시작 시 Chrome 1회 launch (chrome_session/ + CDP :9222) →
+  4단계 (preflight·meta·capture) 가 모두 같은 인스턴스에 attach →
+  파이프라인 끝나면 종료. 단계 사이에서 절대 종료되지 않음.
 """
 import argparse
+import asyncio
 import json
 import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
+
+from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 WORK_DIR = Path.cwd()
 PYTHON = sys.executable
+CDP_PORT = 9222
+CDP_URL = f"http://localhost:{CDP_PORT}"
+VIEWPORT = {"width": 1280, "height": 800}
 
 
 def detect_platform(url: str) -> str:
@@ -53,7 +60,33 @@ def parse_id(url: str, platform: str) -> str:
     return m.group(1)
 
 
-def run_step(name: str, cmd: list, allow_fail: bool = False) -> int:
+async def wait_for_cdp(url: str = CDP_URL, timeout: float = 20.0) -> bool:
+    """Chrome CDP HTTP 엔드포인트가 응답할 때까지 폴링."""
+    loop = asyncio.get_event_loop()
+    end = loop.time() + timeout
+    while loop.time() < end:
+        try:
+            await asyncio.to_thread(
+                urllib.request.urlopen, f"{url}/json/version", timeout=1
+            )
+            return True
+        except Exception:
+            await asyncio.sleep(0.3)
+    return False
+
+
+async def run_step(name: str, cmd: list, allow_fail: bool = False) -> int:
+    print(f"\n{'='*60}\n[STEP] {name}\n{'='*60}")
+    proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(WORK_DIR))
+    rc = await proc.wait()
+    if rc != 0 and not allow_fail:
+        print(f"[ABORT] {name} 실패 (exit {rc})")
+        sys.exit(rc)
+    return rc
+
+
+def run_step_sync(name: str, cmd: list, allow_fail: bool = False) -> int:
+    """브라우저 안 쓰는 단계용 (ig_import_meta, build_excel)."""
     print(f"\n{'='*60}\n[STEP] {name}\n{'='*60}")
     r = subprocess.run(cmd, cwd=str(WORK_DIR))
     if r.returncode != 0 and not allow_fail:
@@ -129,7 +162,68 @@ def verify(post_dir: Path, data: dict) -> bool:
     return not missing_folders and not missing_files
 
 
-def main():
+async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
+    """브라우저 기반 단계들 — Chrome 1회 launch, 같은 인스턴스 공유."""
+    stealth = Stealth()
+    async with stealth.use_async(async_playwright()) as p:
+        print(f"\n[browser] persistent context launch (CDP :{CDP_PORT})")
+        ctx = await p.chromium.launch_persistent_context(
+            str(WORK_DIR / "chrome_session"),
+            channel="chrome",
+            headless=False,
+            viewport=VIEWPORT,
+            locale="ko-KR",
+            args=[f"--remote-debugging-port={CDP_PORT}"],
+        )
+        try:
+            if not await wait_for_cdp():
+                print(f"[ABORT] CDP 응답 없음: {CDP_URL}")
+                sys.exit(10)
+            print(f"[browser] CDP ready: {CDP_URL}")
+
+            # 1. preflight (IG 만 — YT 는 공개 댓글)
+            if platform == "ig" and not args.skip_preflight:
+                await run_step(
+                    "Pre-flight (IG 세션 점검)",
+                    [PYTHON, str(SCRIPTS_DIR / "ig_preflight.py"),
+                     args.url, "--cdp", CDP_URL],
+                )
+
+            # 2. 메타 수집
+            if args.collect_meta or not progress_path.exists():
+                if platform == "ig" and args.old_xlsx and not args.collect_meta:
+                    # xlsx import 는 브라우저 안 씀
+                    run_step_sync(
+                        "메타 import (IG xlsx)",
+                        [PYTHON, str(SCRIPTS_DIR / "ig_import_meta.py"),
+                         args.old_xlsx, post_id],
+                    )
+                else:
+                    cmd = [PYTHON, str(SCRIPTS_DIR / f"{platform}_collect_meta.py"),
+                           args.url, "--cdp", CDP_URL]
+                    if platform == "yt":
+                        if args.limit:
+                            cmd += ["--limit", str(args.limit)]
+                        if args.no_replies:
+                            cmd += ["--no-replies"]
+                    await run_step(f"메타 수집 ({platform.upper()} API)", cmd)
+            else:
+                print(f"\n[SKIP] 메타 이미 있음: {progress_path}")
+
+            # 3. 캡처
+            if not args.skip_capture:
+                await run_step(
+                    f"캡처 ({platform.upper()} UI, display={args.display})",
+                    [PYTHON, str(SCRIPTS_DIR / f"{platform}_capture_individual.py"),
+                     str(progress_path), "--display", str(args.display),
+                     "--cdp", CDP_URL],
+                )
+        finally:
+            print(f"\n[browser] 파이프라인 종료 → context close")
+            await ctx.close()
+
+
+async def main_async():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
     ap.add_argument("--limit", type=int, default=0, help="root 댓글 상한 (YT 테스트용)")
@@ -155,34 +249,10 @@ def main():
     print(f"#  cwd: {WORK_DIR}")
     print(f"{'#'*60}")
 
-    # 1. preflight (IG 만 — YT 는 공개 댓글이라 wall 위험 적음)
-    if platform == "ig" and not args.skip_preflight:
-        run_step("Pre-flight (IG 세션 점검)",
-                 [PYTHON, str(SCRIPTS_DIR / "ig_preflight.py"), args.url])
+    # 브라우저 기반 단계 (preflight + meta + capture) — Chrome 1회만
+    await run_pipeline(args, platform, post_id, progress_path)
 
-    # 2. 메타 수집
-    if args.collect_meta or not progress_path.exists():
-        if platform == "ig" and args.old_xlsx and not args.collect_meta:
-            run_step("메타 import (IG xlsx)",
-                     [PYTHON, str(SCRIPTS_DIR / "ig_import_meta.py"), args.old_xlsx, post_id])
-        else:
-            cmd = [PYTHON, str(SCRIPTS_DIR / f"{platform}_collect_meta.py"), args.url]
-            if platform == "yt":
-                if args.limit:
-                    cmd += ["--limit", str(args.limit)]
-                if args.no_replies:
-                    cmd += ["--no-replies"]
-            run_step(f"메타 수집 ({platform.upper()} API)", cmd)
-    else:
-        print(f"\n[SKIP] 메타 이미 있음: {progress_path}")
-
-    # 3. 캡처
-    if not args.skip_capture:
-        run_step(f"캡처 ({platform.upper()} UI, display={args.display})",
-                 [PYTHON, str(SCRIPTS_DIR / f"{platform}_capture_individual.py"),
-                  str(progress_path), "--display", str(args.display)])
-
-    # 4. 누락 보정 + 5. 검증
+    # 4. 누락 보정 + 5. 검증 (브라우저 불필요)
     data = json.loads(progress_path.read_text(encoding="utf-8"))
     folder_name = data.get("folder_name") or post_id  # backward-compat
     total_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
@@ -190,9 +260,11 @@ def main():
     fill_missing(post_dir, data)
     ok = verify(post_dir, data)
 
-    # 6. 엑셀 빌드 — output/{folder_name}/result.xlsx 로 자동 저장
-    run_step("엑셀 빌드 (11컬럼)",
-             [PYTHON, str(SCRIPTS_DIR / "build_excel.py"), str(progress_path)])
+    # 6. 엑셀 빌드 (브라우저 불필요)
+    run_step_sync(
+        "엑셀 빌드 (11컬럼)",
+        [PYTHON, str(SCRIPTS_DIR / "build_excel.py"), str(progress_path)],
+    )
 
     out = WORK_DIR / "output" / folder_name / "result.xlsx"
     print(f"\n{'='*60}\n[DONE] 산출물 폴더: {WORK_DIR / 'output' / folder_name}")
@@ -200,6 +272,10 @@ def main():
     if not ok:
         print("⚠️  검증 미통과 — 수동 확인 필요 (누락된 폴더/파일 있음)")
         sys.exit(2)
+
+
+def main():
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
