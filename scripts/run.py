@@ -139,6 +139,9 @@ def main():
     ap.add_argument("--old-xlsx", default=None, help="(IG 전용) 이전 xlsx 메타 import")
     ap.add_argument("--collect-meta", action="store_true",
                     help="(IG 전용) 강제 메타 재수집")
+    ap.add_argument("--display", type=int, default=1,
+                    help="캡처할 모니터 (1=주모니터, 2,3=보조). "
+                         "외부 모니터 활용 시 캡처 중 본인 모니터로 다른 작업 가능")
     args = ap.parse_args()
 
     platform = detect_platform(args.url)
@@ -175,9 +178,9 @@ def main():
 
     # 3. 캡처
     if not args.skip_capture:
-        run_step(f"캡처 ({platform.upper()} UI)",
+        run_step(f"캡처 ({platform.upper()} UI, display={args.display})",
                  [PYTHON, str(SCRIPTS_DIR / f"{platform}_capture_individual.py"),
-                  str(progress_path)])
+                  str(progress_path), "--display", str(args.display)])
 
     # 4. 누락 보정 + 5. 검증
     data = json.loads(progress_path.read_text(encoding="utf-8"))

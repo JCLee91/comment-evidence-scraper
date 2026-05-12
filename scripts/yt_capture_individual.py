@@ -24,6 +24,9 @@ from urllib.parse import unquote
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fullscreen import fullscreen_capture  # noqa: E402
+
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
 VIEWPORT = {"width": 1280, "height": 800}
@@ -165,8 +168,8 @@ async def expand_replies_for(page, root_cid: str) -> bool:
     return True
 
 
-async def capture_comment(page, cid: str, dst_png: Path, parent_cid: str | None = None) -> bool:
-    """패널에서 해당 댓글을 위쪽으로 정렬한 후 viewport screenshot."""
+async def capture_comment(page, cid: str, dst_png: Path, parent_cid: str | None = None, monitor: int = 1) -> bool:
+    """패널에서 해당 댓글을 위쪽으로 정렬한 후 전체 화면 캡처 (시스템 시계 포함)."""
     ok = await find_thread_in_dom(page, cid)
     if not ok:
         # 답글이면 부모 root 의 답글 펼치기 시도
@@ -195,15 +198,14 @@ async def capture_comment(page, cid: str, dst_png: Path, parent_cid: str | None 
     # 마우스 이동 (hover artifact 제거)
     await page.mouse.move(0, 0)
     await asyncio.sleep(0.3)
-    dst_png.parent.mkdir(parents=True, exist_ok=True)
-    await page.screenshot(path=str(dst_png), full_page=False)
+    await fullscreen_capture(page, dst_png, monitor=monitor)
     if dst_png.stat().st_size < MIN_KB * 1024:
         print(f"  [tiny] {dst_png.name} {dst_png.stat().st_size}B")
         return False
     return True
 
 
-async def capture_profile(page, profile_url: str, dst_png: Path) -> bool:
+async def capture_profile(page, profile_url: str, dst_png: Path, monitor: int = 1) -> bool:
     print(f"  [profile] → {profile_url}")
     try:
         await page.goto(profile_url, wait_until="domcontentloaded", timeout=20000)
@@ -211,9 +213,8 @@ async def capture_profile(page, profile_url: str, dst_png: Path) -> bool:
         print(f"    nav err: {e}")
         return False
     await asyncio.sleep(3)
-    dst_png.parent.mkdir(parents=True, exist_ok=True)
     try:
-        await page.screenshot(path=str(dst_png), full_page=False)
+        await fullscreen_capture(page, dst_png, monitor=monitor)
     except Exception as e:
         print(f"    screenshot err: {e}")
         return False
@@ -224,6 +225,8 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("progress")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--display", type=int, default=1,
+                    help="캡처할 모니터 (mss 인덱스, 1=주모니터, 2,3=보조). 0=전체합본")
     args = ap.parse_args()
 
     progress_path = Path(args.progress).resolve()
@@ -288,7 +291,7 @@ async def main():
             if cmt_png.exists() and cmt_png.stat().st_size > MIN_KB * 1024:
                 print(f"  [skip] {folder_name_ent}/댓글.png exists")
             else:
-                ok = await capture_comment(page, cid, cmt_png, parent_cid=parent_cid)
+                ok = await capture_comment(page, cid, cmt_png, parent_cid=parent_cid, monitor=args.display)
                 if ok:
                     print(f"  [ok] {folder_name_ent}/댓글.png")
                 else:
@@ -301,7 +304,7 @@ async def main():
             else:
                 purl = rec.get("profile_url", "")
                 if purl:
-                    ok = await capture_profile(prof_page, purl, prof_png)
+                    ok = await capture_profile(prof_page, purl, prof_png, monitor=args.display)
                     if ok:
                         print(f"  [ok] {folder_name_ent}/프로필.png")
                     else:

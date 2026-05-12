@@ -9,7 +9,7 @@
   4) 각 댓글마다:
      a) row 찾기 (DOM 검색, 인스타 트래픽 0)
      b) scrollIntoView({block:'start'}) → 사이드바 맨 위로 강제 정렬
-     c) page.screenshot() viewport
+     c) 전체 화면 캡처 (시스템 시계 포함, _fullscreen.py)
      d) 저장 후 1.0~2.5초 jitter
   5) resume: 이미 PNG 있으면 skip
 
@@ -17,6 +17,7 @@
   - 100개마다 5분 idle (인스타 자동화 탐지 회피)
   - 모든 캡처 끝나면 브라우저 종료
 """
+import argparse
 import asyncio
 import json
 import random
@@ -25,6 +26,9 @@ import sys
 from pathlib import Path
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fullscreen import fullscreen_capture  # noqa: E402
 
 PROJECT = Path.cwd()
 USER_DATA_DIR = str(PROJECT / "chrome_session")
@@ -277,7 +281,13 @@ async def scroll_target_to_top(page, username):
 
 
 async def main():
-    progress_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PROGRESS
+    ap = argparse.ArgumentParser()
+    ap.add_argument("progress", nargs="?", default=str(DEFAULT_PROGRESS))
+    ap.add_argument("--display", type=int, default=1,
+                    help="캡처할 모니터 (mss 인덱스, 1=주모니터, 2,3=보조). 0=전체합본")
+    args = ap.parse_args()
+    progress_path = Path(args.progress)
+    monitor = args.display
     print(f"[info] progress: {progress_path}")
     data = json.loads(progress_path.read_text(encoding="utf-8"))
     post_id = data["post_id"]
@@ -413,9 +423,8 @@ async def main():
             }""")
             await asyncio.sleep(0.3)
 
-            out.parent.mkdir(parents=True, exist_ok=True)
             try:
-                await page.screenshot(path=str(out), full_page=False)
+                await fullscreen_capture(page, out, monitor=monitor)
                 size_kb = out.stat().st_size / 1024
                 print(f"  ✓ {idx}/{len(targets)} {out.parent.name}: {size_kb:.0f} KB")
                 captured += 1
@@ -480,10 +489,8 @@ async def main():
             await page.evaluate("window.scrollTo(0, 0)")
             await page.mouse.move(0, 0)
             await asyncio.sleep(0.5)
-            out.parent.mkdir(parents=True, exist_ok=True)
             try:
-                await page.screenshot(path=str(out),
-                                      clip={"x": 0, "y": 0, "width": VIEWPORT["width"], "height": 700})
+                await fullscreen_capture(page, out, monitor=monitor)
                 size_kb = out.stat().st_size / 1024
                 print(f"  ✓ {idx}/{len(unique_users)} {uname}: {size_kb:.0f} KB")
                 p_captured += 1
