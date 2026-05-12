@@ -162,6 +162,38 @@ def verify(post_dir: Path, data: dict) -> bool:
     return not missing_folders and not missing_files
 
 
+def start_caffeinate() -> subprocess.Popen | None:
+    """macOS 에서 작업 동안 디스플레이 sleep / idle sleep 차단.
+    안 막으면 잠금화면 / 스크린세이버가 풀스크린 캡처에 그대로 박힘
+    (mss 가 OS 레벨이라 위에 뜬 화면을 그대로 잡음)."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        proc = subprocess.Popen(
+            ["caffeinate", "-di"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"[caffeinate] display + idle sleep 차단 (pid {proc.pid})")
+        return proc
+    except FileNotFoundError:
+        print("[warn] caffeinate 없음 — 잠금/스크린세이버 수동 차단 필요")
+        return None
+
+
+def stop_caffeinate(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 def sanitize_chrome_session(session_dir: Path) -> None:
     """이전 작업이 비정상 종료(예: pkill)됐을 때 남는 dirty state 를 정리.
     안 정리하면 다음 launch 시 '예기치 못하게 종료' 배너 + '복원' 탭이 떠서
@@ -282,31 +314,35 @@ async def main_async():
     print(f"#  cwd: {WORK_DIR}")
     print(f"{'#'*60}")
 
-    # 브라우저 기반 단계 (preflight + meta + capture) — Chrome 1회만
-    await run_pipeline(args, platform, post_id, progress_path)
+    caffeinate_proc = start_caffeinate()
+    try:
+        # 브라우저 기반 단계 (preflight + meta + capture) — Chrome 1회만
+        await run_pipeline(args, platform, post_id, progress_path)
 
-    # 4. 누락 보정 + 5. 검증 (브라우저 불필요)
-    data = json.loads(progress_path.read_text(encoding="utf-8"))
-    folder_name = data.get("folder_name") or post_id  # backward-compat
-    if args.limit:
-        data["threads"] = data["threads"][:args.limit]
-    total_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
-    post_dir = WORK_DIR / "output" / folder_name / f"스크린샷({total_count})"
-    fill_missing(post_dir, data)
-    ok = verify(post_dir, data)
+        # 4. 누락 보정 + 5. 검증 (브라우저 불필요)
+        data = json.loads(progress_path.read_text(encoding="utf-8"))
+        folder_name = data.get("folder_name") or post_id  # backward-compat
+        if args.limit:
+            data["threads"] = data["threads"][:args.limit]
+        total_count = sum(1 + len(t.get("replies", [])) for t in data["threads"])
+        post_dir = WORK_DIR / "output" / folder_name / f"스크린샷({total_count})"
+        fill_missing(post_dir, data)
+        ok = verify(post_dir, data)
 
-    # 6. 엑셀 빌드 (브라우저 불필요)
-    excel_cmd = [PYTHON, str(SCRIPTS_DIR / "build_excel.py"), str(progress_path)]
-    if args.limit:
-        excel_cmd += ["--limit", str(args.limit)]
-    run_step_sync("엑셀 빌드 (11컬럼)", excel_cmd)
+        # 6. 엑셀 빌드 (브라우저 불필요)
+        excel_cmd = [PYTHON, str(SCRIPTS_DIR / "build_excel.py"), str(progress_path)]
+        if args.limit:
+            excel_cmd += ["--limit", str(args.limit)]
+        run_step_sync("엑셀 빌드 (11컬럼)", excel_cmd)
 
-    out = WORK_DIR / "output" / folder_name / "result.xlsx"
-    print(f"\n{'='*60}\n[DONE] 산출물 폴더: {WORK_DIR / 'output' / folder_name}")
-    print(f"        엑셀: {out}\n{'='*60}")
-    if not ok:
-        print("⚠️  검증 미통과 — 수동 확인 필요 (누락된 폴더/파일 있음)")
-        sys.exit(2)
+        out = WORK_DIR / "output" / folder_name / "result.xlsx"
+        print(f"\n{'='*60}\n[DONE] 산출물 폴더: {WORK_DIR / 'output' / folder_name}")
+        print(f"        엑셀: {out}\n{'='*60}")
+        if not ok:
+            print("⚠️  검증 미통과 — 수동 확인 필요 (누락된 폴더/파일 있음)")
+            sys.exit(2)
+    finally:
+        stop_caffeinate(caffeinate_proc)
 
 
 def main():
