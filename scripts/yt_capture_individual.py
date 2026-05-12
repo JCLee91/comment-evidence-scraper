@@ -263,7 +263,7 @@ async def main():
         ctx, owns_ctx = await get_context(
             p, args.cdp, USER_DATA_DIR,
             channel="chrome", headless=False,
-            viewport=VIEWPORT, locale="ko-KR",
+            no_viewport=True, locale="ko-KR",
         )
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         prof_page = await ctx.new_page()  # 프로필 캡처 전용 탭

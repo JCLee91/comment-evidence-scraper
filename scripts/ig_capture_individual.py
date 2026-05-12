@@ -318,7 +318,7 @@ async def main():
         ctx, owns_ctx = await get_context(
             p, args.cdp, USER_DATA_DIR,
             channel="chrome", headless=False,
-            viewport=VIEWPORT, locale="ko-KR",
+            no_viewport=True, locale="ko-KR",
         )
 
         async def block_follow(route, request):

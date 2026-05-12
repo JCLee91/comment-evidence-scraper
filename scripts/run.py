@@ -171,7 +171,7 @@ async def run_pipeline(args, platform: str, post_id: str, progress_path: Path):
             str(WORK_DIR / "chrome_session"),
             channel="chrome",
             headless=False,
-            viewport=VIEWPORT,
+            no_viewport=True,  # maximized 윈도우 그대로 — viewport 강제 X
             locale="ko-KR",
             args=[f"--remote-debugging-port={CDP_PORT}", "--start-maximized"],
         )
